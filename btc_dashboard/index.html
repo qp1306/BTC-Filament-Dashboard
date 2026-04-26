@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BTC Filament Dashboard</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>BTC Filament Dashboard</h1>
+      <p id="subtitle">Loading dashboard...</p>
+    </div>
+    <a id="mainsailLink" class="back-button" href="/">← Back to Mainsail</a>
+  </header>
+
+  <main>
+    <section class="summary-grid">
+      <div class="summary-card">
+        <span class="label">Active Tool</span>
+        <strong id="activeTool">--</strong>
+      </div>
+      <div class="summary-card">
+        <span class="label">Last Event</span>
+        <strong id="lastEvent">--</strong>
+      </div>
+      <div class="summary-card">
+        <span class="label">Updated</span>
+        <strong id="updatedAt">--</strong>
+      </div>
+    </section>
+
+    <section>
+      <h2>Tools T0–T5</h2>
+      <div id="toolGrid" class="tool-grid"></div>
+    </section>
+
+    <section>
+      <h2>Event History</h2>
+      <div id="historyList" class="history-list"></div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
