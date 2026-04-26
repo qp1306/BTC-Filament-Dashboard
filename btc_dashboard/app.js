@@ -6,6 +6,26 @@ const updatedAtEl = document.getElementById("updatedAt");
 
 function clean(v, d="--"){return v==null||v==""?d:v}
 
+function formatLocalTime(value){
+  if(!value) return "--";
+
+  // Server currently returns UTC like: 2026-04-26 12:31:18
+  // Treat it as UTC, then display in the browser's local timezone.
+  const utcString = String(value).replace(" ", "T") + "Z";
+  const dt = new Date(utcString);
+  if(Number.isNaN(dt.getTime())) return value;
+
+  return dt.toLocaleString(undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  });
+}
+
 function badgeClass(state){
   const s = String(state||"").toLowerCase();
   if(s.includes("fault")||s.includes("error")) return "badge fault";
@@ -38,20 +58,25 @@ function renderTools(data){
 
 function renderHistory(data){
   const h = data.history || [];
+  if(!h.length){
+    historyList.innerHTML = `<div class="empty">No dashboard events yet.</div>`;
+    return;
+  }
+
   historyList.innerHTML = h.slice(0,10).map(r=>`<div class="history-row">
-    <strong>${r.time}</strong>
-    <span>T${r.tool}</span>
-    <span>${r.event}</span>
-    <span>${clean(r.message)}</span>
+    <strong>${formatLocalTime(r.time)}</strong>
+    <span>${r.tool === "" ? "--" : "T" + r.tool}</span>
+    <span>${clean(r.event)}</span>
+    <span>${clean(r.message || r.state || r.mdm_state)}</span>
   </div>`).join("");
 }
 
 async function load(){
-  const r=await fetch('/api/status');
+  const r=await fetch('/api/status', {cache:'no-store'});
   const d=await r.json();
   activeToolEl.textContent = d.status.active_tool==null?"--":"T"+d.status.active_tool;
   lastEventEl.textContent = clean(d.status.last_event);
-  updatedAtEl.textContent = clean(d.updated_at);
+  updatedAtEl.textContent = formatLocalTime(d.updated_at);
   renderTools(d);
   renderHistory(d);
 }
