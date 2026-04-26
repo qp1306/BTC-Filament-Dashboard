@@ -1,0 +1,4 @@
+body { background:#111; color:#eee; font-family:Arial; }
+.topbar { display:flex; justify-content:space-between; padding:10px; }
+.tool-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+.tool-card { border:1px solid #333; padding:10px; }
