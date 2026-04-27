@@ -1,85 +1,178 @@
-const toolGrid = document.getElementById("toolGrid");
-const historyList = document.getElementById("historyList");
-const activeToolEl = document.getElementById("activeTool");
-const lastEventEl = document.getElementById("lastEvent");
-const updatedAtEl = document.getElementById("updatedAt");
+const mdmTiles = document.getElementById("mdmTiles");
+const activeToolBig = document.getElementById("activeToolBig");
+const activeSpoolName = document.getElementById("activeSpoolName");
+const activeSpoolId = document.getElementById("activeSpoolId");
+const printingTime = document.getElementById("printingTime");
+const layerText = document.getElementById("layerText");
+const progressText = document.getElementById("progressText");
+const progressMini = document.getElementById("progressMini");
+const usageActiveTool = document.getElementById("usageActiveTool");
+const mdmStatusBadge = document.getElementById("mdmStatusBadge");
+const mdmStatusText = document.getElementById("mdmStatusText");
+const thisPrintM = document.getElementById("thisPrintM");
+const thisPrintG = document.getElementById("thisPrintG");
+const printStartM = document.getElementById("printStartM");
+const printStartG = document.getElementById("printStartG");
+const printRate = document.getElementById("printRate");
+const printRateG = document.getElementById("printRateG");
+const totalUsedM = document.getElementById("totalUsedM");
+const totalUsedG = document.getElementById("totalUsedG");
+const materialProfile = document.getElementById("materialProfile");
+const remainingDonut = document.getElementById("remainingDonut");
+const remainingPercent = document.getElementById("remainingPercent");
+const remainingMeters = document.getElementById("remainingMeters");
+const remainingGrams = document.getElementById("remainingGrams");
+const totalMeters = document.getElementById("totalMeters");
+const totalGrams = document.getElementById("totalGrams");
+const usedMeters = document.getElementById("usedMeters");
+const usedGrams = document.getElementById("usedGrams");
+const estimatedEnd = document.getElementById("estimatedEnd");
+const usageGraph = document.getElementById("usageGraph");
+const toolSelect = document.getElementById("toolSelect");
+const spoolTableBody = document.getElementById("spoolTableBody");
 
-function clean(v, d="--"){return v==null||v==""?d:v}
+const DEFAULT_SPOOLS = {
+  0:{id:100,material:"PLA",color:"White",hex:"#f5f5f5",total_m:400,remaining_m:312,g_per_m:2.955},
+  1:{id:101,material:"ABS",color:"Black",hex:"#050505",total_m:400,remaining_m:198,g_per_m:2.55},
+  2:{id:102,material:"PETG",color:"Orange",hex:"#ff9632",total_m:400,remaining_m:286,g_per_m:3.05},
+  3:{id:103,material:"TPU95A",color:"Clear",hex:"#aeb4b8",total_m:400,remaining_m:324,g_per_m:2.91},
+  4:{id:104,material:"PLA",color:"Blue",hex:"#199ce8",total_m:400,remaining_m:150,g_per_m:2.967},
+  5:{id:105,material:"PLA",color:"Red",hex:"#ff3030",total_m:400,remaining_m:98,g_per_m:2.959}
+};
 
-function formatLocalTime(value){
-  if(!value) return "--";
+function n(v,d=0){const x=Number(v);return Number.isFinite(x)?x:d}
+function clean(v,d="--"){return v==null||v===""?d:v}
+function m(v){return `${n(v).toFixed(1)} m`}
+function g(v){return `(${n(v).toFixed(1)} g)`}
+function wholeM(v){return `${Math.round(n(v))} m`}
+function wholeG(v){return `(${Math.round(n(v))} g)`}
 
-  // Server currently returns UTC like: 2026-04-26 12:31:18
-  // Treat it as UTC, then display in the browser's local timezone.
-  const utcString = String(value).replace(" ", "T") + "Z";
-  const dt = new Date(utcString);
-  if(Number.isNaN(dt.getTime())) return value;
-
-  return dt.toLocaleString(undefined, {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false
-  });
+function getToolId(data){
+  const at = data?.status?.active_tool;
+  if(at !== undefined && at !== null && at !== "") return Number(at);
+  return 0;
+}
+function getTool(data,id){return (data.tools||[]).find(t=>Number(t.id)===Number(id)) || {id}}
+function getSpool(data,id){
+  const t = getTool(data,id);
+  const sid = t.spool_id;
+  const spools = data.spools || {};
+  const found = spools[sid] || spools[String(sid)] || spools[id] || spools[String(id)];
+  return {...DEFAULT_SPOOLS[id], ...(found||{}), id: found?.id ?? sid ?? DEFAULT_SPOOLS[id]?.id};
+}
+function isDisabledTool(t,id){
+  const s = String(t.state||t.mdm_state||"").toLowerCase();
+  return s.includes("disable") || (!t.mdm_sensor && id >= 4);
+}
+function isMoving(t,id,active){
+  const s = String(t.mdm_state||t.state||"").toLowerCase();
+  return Number(id)===Number(active) && (s.includes("moving") || s.includes("active") || s.includes("printing") || s==="");
 }
 
-function badgeClass(state){
-  const s = String(state||"").toLowerCase();
-  if(s.includes("fault")||s.includes("error")) return "badge fault";
-  if(s.includes("warn")) return "badge warning";
-  if(s.includes("active")||s.includes("printing")) return "badge active";
-  return "badge";
-}
-
-function renderTools(data){
-  const tools = data.tools || [];
-  const active = data?.status?.active_tool;
-
-  toolGrid.innerHTML = tools.map(t=>{
-    const isActive = String(active) === String(t.id);
-    return `
-    <div class="tool-card ${isActive?"active":""}">
-      <div class="tool-header">
-        <div class="tool-name">T${t.id}</div>
-        <div class="${badgeClass(t.state)}">${clean(t.state)}</div>
-      </div>
-      <div class="tool-detail">
-        <div class="detail-box"><span>MDM</span><strong>${clean(t.mdm_sensor)}</strong></div>
-        <div class="detail-box"><span>Status</span><strong>${clean(t.mdm_state)}</strong></div>
-        <div class="detail-box"><span>Spool</span><strong>${t.spool_id??"None"}</strong></div>
-        <div class="detail-box"><span>Used</span><strong>${(t.filament_mm||0).toFixed(1)} mm</strong></div>
-      </div>
+function renderMdm(data){
+  const active = getToolId(data);
+  let ok = true;
+  mdmTiles.innerHTML = [0,1,2,3,4,5].map(id=>{
+    const t = getTool(data,id);
+    const disabled = isDisabledTool(t,id);
+    const moving = isMoving(t,id,active) && !disabled;
+    if(String(t.state||"").toLowerCase().includes("fault")) ok = false;
+    const state = disabled ? "DISABLED" : moving ? "MOVING" : "IDLE";
+    const msg = disabled ? "Not configured" : moving ? "Filament moving" : "No movement";
+    return `<div class="mdm-tile ${moving?"active":""} ${disabled?"disabled":""}">
+      <div class="mdm-tool">T${id}</div>
+      <div class="mdm-state">${state}</div>
+      <div class="mdm-message">${msg}</div>
+      <div class="dot ${moving?"green":""}"></div>
     </div>`;
+  }).join("");
+  mdmStatusBadge.textContent = ok ? "OK" : "FAULT";
+  mdmStatusText.textContent = ok ? "All systems normal" : "Check tool sensors";
+}
+
+function renderActive(data){
+  const id = getToolId(data);
+  const t = getTool(data,id);
+  const s = getSpool(data,id);
+  const material = clean(s.material || t.material, "Unknown");
+  const color = clean(s.color || t.color, "Spool");
+  const progress = n(data.status?.progress, 16);
+  activeToolBig.textContent = `T${id}`;
+  activeSpoolName.textContent = `${material} - ${color}`;
+  activeSpoolId.textContent = clean(s.id ?? t.spool_id, "--");
+  printingTime.textContent = clean(data.status?.printing_time, "02:14:37");
+  layerText.textContent = clean(data.status?.layer, "42 / 256");
+  progressText.textContent = `${Math.round(progress)}%`;
+  progressMini.style.setProperty("--p", `${progress}%`);
+  usageActiveTool.textContent = `T${id}`;
+}
+
+function renderUsage(data){
+  const id = getToolId(data);
+  const t = getTool(data,id);
+  const s = getSpool(data,id);
+  const gpm = n(s.g_per_m, n(t.g_per_m, 3.05));
+  const totalUsed = n(t.filament_m, n(t.filament_mm, 186400)/1000);
+  const thisPrint = n(data.status?.this_print_m, 14.8);
+  const startUsed = n(data.status?.print_start_m, Math.max(0,totalUsed-thisPrint));
+  const rate = n(data.status?.print_rate_mms, 6.2);
+  thisPrintM.textContent = m(thisPrint); thisPrintG.textContent = g(thisPrint*gpm);
+  printStartM.textContent = m(startUsed); printStartG.textContent = g(startUsed*gpm);
+  printRate.textContent = `${rate.toFixed(1)} mm/s`; printRateG.textContent = `(${(rate*60/1000*gpm).toFixed(1)} g/min)`;
+  totalUsedM.textContent = m(totalUsed); totalUsedG.textContent = g(totalUsed*gpm);
+  materialProfile.textContent = `${clean(s.material,"--")} (${gpm.toFixed(2)} g/m)`;
+}
+
+function renderRemaining(data){
+  const id = getToolId(data);
+  const t = getTool(data,id);
+  const s = getSpool(data,id);
+  const gpm = n(s.g_per_m, 3.05);
+  const total = n(s.total_m, 400);
+  const remaining = n(s.remaining_m, Math.max(0,total - n(t.filament_mm,114000)/1000));
+  const used = Math.max(0,total - remaining);
+  const pct = total > 0 ? Math.round((remaining/total)*100) : 0;
+  remainingDonut.style.setProperty("--p", pct);
+  remainingPercent.textContent = `${pct}%`;
+  remainingMeters.textContent = m(remaining); remainingGrams.textContent = g(remaining*gpm);
+  totalMeters.textContent = m(total); totalGrams.textContent = g(total*gpm);
+  usedMeters.textContent = m(used); usedGrams.textContent = g(used*gpm);
+  estimatedEnd.textContent = clean(data.status?.estimated_end, "~ 14h 23m");
+}
+
+function renderGraph(data){
+  const id = Number(toolSelect.value || getToolId(data));
+  const t = getTool(data,id);
+  const used = n(t.filament_m, n(t.filament_mm,114000)/1000);
+  const pts = [0, 5, 16, 55, 72, used].map((y,i)=>({x:i*144,y}));
+  const maxY = Math.max(200, used*1.2);
+  const sx=x=>40+(x/720)*650;
+  const sy=y=>210-(y/maxY)*170;
+  const line = pts.map((p,i)=>`${i?"L":"M"}${sx(p.x).toFixed(1)} ${sy(p.y).toFixed(1)}`).join(" ");
+  let grid = "";
+  [0,50,100,150,200].forEach(v=>{const y=sy(v);grid+=`<line x1="40" y1="${y}" x2="690" y2="${y}" class="grid-line"/><text x="8" y="${y+5}" class="axis-text">${v}</text>`});
+  [40,257,473,690].forEach(x=>{grid+=`<line x1="${x}" y1="38" x2="${x}" y2="210" class="grid-line"/>`});
+  usageGraph.innerHTML = `<style>.grid-line{stroke:rgba(255,255,255,.14);stroke-dasharray:3 3}.axis-text{fill:#e8edf2;font-size:15px}.usage-line{fill:none;stroke:#58d744;stroke-width:3}.end-label{fill:#58d744}.end-text{fill:#fff;font-size:15px;font-weight:800}</style>${grid}<path d="${line}" class="usage-line"/><rect x="650" y="${sy(used)-18}" rx="5" ry="5" width="68" height="30" class="end-label"/><text x="684" y="${sy(used)+2}" text-anchor="middle" class="end-text">${used.toFixed(1)} m</text>`;
+}
+
+function renderTable(data){
+  const active = getToolId(data);
+  toolSelect.innerHTML = [0,1,2,3,4,5].map(id=>{const s=getSpool(data,id);return `<option value="${id}" ${id===active?"selected":""}>T${id} (${s.material} - ${s.color})</option>`}).join("");
+  spoolTableBody.innerHTML = [0,1,2,3,4,5].map(id=>{
+    const t = getTool(data,id); const s = getSpool(data,id); const gpm = n(s.g_per_m,3); const rem=n(s.remaining_m,0);
+    const disabled = isDisabledTool(t,id); const activeRow = id===active && !disabled;
+    return `<tr><td>T${id}</td><td>${clean(s.id,"--")}</td><td>${clean(s.material,"--")}</td><td>${clean(s.color,"--")} <span class="color-dot" style="background:${s.hex||"#777"}"></span></td><td>${wholeM(rem)} ${wholeG(rem*gpm)}</td><td class="${disabled?"status-disabled":activeRow?"status-active":"status-ready"}">${disabled?"DISABLED":activeRow?"ACTIVE":"READY"}</td></tr>`;
   }).join("");
 }
 
-function renderHistory(data){
-  const h = data.history || [];
-  if(!h.length){
-    historyList.innerHTML = `<div class="empty">No dashboard events yet.</div>`;
-    return;
-  }
-
-  historyList.innerHTML = h.slice(0,10).map(r=>`<div class="history-row">
-    <strong>${formatLocalTime(r.time)}</strong>
-    <span>${r.tool === "" ? "--" : "T" + r.tool}</span>
-    <span>${clean(r.event)}</span>
-    <span>${clean(r.message || r.state || r.mdm_state)}</span>
-  </div>`).join("");
-}
-
 async function load(){
-  const r=await fetch('/api/status', {cache:'no-store'});
-  const d=await r.json();
-  activeToolEl.textContent = d.status.active_tool==null?"--":"T"+d.status.active_tool;
-  lastEventEl.textContent = clean(d.status.last_event);
-  updatedAtEl.textContent = formatLocalTime(d.updated_at);
-  renderTools(d);
-  renderHistory(d);
+  try{
+    const r = await fetch('/api/status',{cache:'no-store'});
+    const d = await r.json();
+    renderActive(d); renderMdm(d); renderUsage(d); renderRemaining(d); renderTable(d); renderGraph(d);
+  }catch(e){console.error(e)}
 }
 
+toolSelect?.addEventListener("change",()=>load());
 setInterval(load,2000);
 load();
