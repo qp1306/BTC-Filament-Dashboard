@@ -10,6 +10,15 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 PORT = int(os.environ.get("BTC_DASHBOARD_PORT", "7131"))
 
+DEFAULT_SPOOLS = {
+    "0": {"id": 100, "material": "PLA", "color": "White", "hex": "#f5f5f5", "total_m": 400, "remaining_m": 312, "g_per_m": 2.955},
+    "1": {"id": 101, "material": "ABS", "color": "Black", "hex": "#050505", "total_m": 400, "remaining_m": 198, "g_per_m": 2.55},
+    "2": {"id": 102, "material": "PETG", "color": "Orange", "hex": "#ff9632", "total_m": 400, "remaining_m": 286, "g_per_m": 3.05},
+    "3": {"id": 103, "material": "TPU95A", "color": "Clear", "hex": "#aeb4b8", "total_m": 400, "remaining_m": 324, "g_per_m": 2.91},
+    "4": {"id": 104, "material": "PLA", "color": "Blue", "hex": "#199ce8", "total_m": 400, "remaining_m": 150, "g_per_m": 2.967},
+    "5": {"id": 105, "material": "PLA", "color": "Red", "hex": "#ff3030", "total_m": 400, "remaining_m": 98, "g_per_m": 2.959},
+}
+
 
 def now_iso():
     return time.strftime("%Y-%m-%d %H:%M:%S")
@@ -34,12 +43,87 @@ def write_json(path, data):
     tmp.replace(path)
 
 
+def to_num(value, fallback=None):
+    try:
+        if value == "" or value is None:
+            return fallback
+        if isinstance(value, str) and "." not in value:
+            return int(value)
+        return float(value)
+    except Exception:
+        return fallback
+
+
+def make_default_tools():
+    tools = []
+    for i in range(6):
+        sp = DEFAULT_SPOOLS[str(i)]
+        tools.append({
+            "id": i,
+            "state": "ready",
+            "mdm_sensor": f"T{i}",
+            "mdm_state": "idle",
+            "spool_id": sp["id"],
+            "filament_mm": round((sp["total_m"] - sp["remaining_m"]) * 1000, 1),
+            "last_update": "",
+        })
+    return tools
+
+
+def normalise_state(status, tools_data, spools_data):
+    tools = tools_data.setdefault("tools", [])
+    by_id = {str(t.get("id")): t for t in tools if "id" in t}
+
+    for i in range(6):
+        sid = str(i)
+        if sid not in by_id:
+            tools.append(make_default_tools()[i])
+            by_id[sid] = tools[-1]
+        t = by_id[sid]
+        t.setdefault("id", i)
+        t.setdefault("state", "ready")
+        t.setdefault("mdm_sensor", f"T{i}")
+        t.setdefault("mdm_state", "idle")
+        t.setdefault("spool_id", DEFAULT_SPOOLS[sid]["id"])
+        t.setdefault("filament_mm", round((DEFAULT_SPOOLS[sid]["total_m"] - DEFAULT_SPOOLS[sid]["remaining_m"]) * 1000, 1))
+
+    active = status.get("active_tool")
+    if active in (None, ""):
+        active = 0
+        status["active_tool"] = 0
+
+    for t in tools:
+        tid = str(t.get("id"))
+        if tid == str(active):
+            t["state"] = "active"
+            if str(t.get("mdm_state", "")).lower() in ("", "idle", "ready", "active"):
+                t["mdm_state"] = "moving" if status.get("printing", False) else "idle"
+        elif str(t.get("state", "")).lower() in ("active", "moving", "printing"):
+            t["state"] = "ready"
+            if str(t.get("mdm_state", "")).lower() in ("active", "moving", "printing"):
+                t["mdm_state"] = "idle"
+
+    spools = spools_data.setdefault("spools", {})
+    for i in range(6):
+        spools.setdefault(str(i), DEFAULT_SPOOLS[str(i)].copy())
+        spools.setdefault(str(DEFAULT_SPOOLS[str(i)]["id"]), DEFAULT_SPOOLS[str(i)].copy())
+
+    status.setdefault("progress", 16)
+    status.setdefault("layer", "42 / 256")
+    status.setdefault("printing_time", "02:14:37")
+    status.setdefault("print_rate_mms", 6.2)
+    status.setdefault("this_print_m", 14.8)
+
+    return status, tools_data, spools_data
+
+
 def load_dashboard_state():
     config = read_json(DATA_DIR / "config.json", {})
-    tools = read_json(DATA_DIR / "tools.json", {"tools": []})
+    tools = read_json(DATA_DIR / "tools.json", {"tools": make_default_tools()})
     spools = read_json(DATA_DIR / "spools.json", {"spools": {}})
     history = read_json(DATA_DIR / "history.json", {"events": []})
     status = read_json(DATA_DIR / "status.json", {})
+    status, tools, spools = normalise_state(status, tools, spools)
 
     return {
         "ok": True,
@@ -52,22 +136,94 @@ def load_dashboard_state():
     }
 
 
+def get_param(params, name, default=""):
+    return params.get(name, [default])[0]
+
+
+def set_tool_active(status, tools_data, tool):
+    if tool == "":
+        return
+    tid = to_num(tool, tool)
+    status["active_tool"] = tid
+    for t in tools_data.get("tools", []):
+        if str(t.get("id")) == str(tool):
+            t["state"] = "active"
+            t["mdm_state"] = "moving"
+            t["last_update"] = now_iso()
+        elif str(t.get("state", "")).lower() in ("active", "moving", "printing"):
+            t["state"] = "ready"
+            if str(t.get("mdm_state", "")).lower() in ("active", "moving", "printing"):
+                t["mdm_state"] = "idle"
+
+
+def update_tool(tools_data, tool, state="", mdm_state="", spool_id="", filament_mm=""):
+    if tool == "":
+        return
+    for t in tools_data.get("tools", []):
+        if str(t.get("id")) == str(tool):
+            if state:
+                t["state"] = state
+            if mdm_state:
+                t["mdm_state"] = mdm_state
+            if spool_id:
+                t["spool_id"] = to_num(spool_id, spool_id)
+            if filament_mm:
+                t["filament_mm"] = to_num(filament_mm, filament_mm)
+            t["last_update"] = now_iso()
+            return
+
+
 def record_event(params):
-    tool = params.get("tool", [""])[0]
-    event = params.get("event", ["manual"])[0]
-    state = params.get("state", [""])[0]
-    message = params.get("message", [""])[0]
-    spool_id = params.get("spool_id", [""])[0]
-    mdm_state = params.get("mdm_state", [""])[0]
-    filament_mm = params.get("filament_mm", [""])[0]
+    tool = get_param(params, "tool")
+    old_tool = get_param(params, "old_tool")
+    new_tool = get_param(params, "new_tool")
+    event = get_param(params, "event", "manual")
+    state = get_param(params, "state")
+    message = get_param(params, "message")
+    spool_id = get_param(params, "spool_id")
+    mdm_state = get_param(params, "mdm_state")
+    filament_mm = get_param(params, "filament_mm")
 
     status = read_json(DATA_DIR / "status.json", {})
     history = read_json(DATA_DIR / "history.json", {"events": []})
-    tools_data = read_json(DATA_DIR / "tools.json", {"tools": []})
+    tools_data = read_json(DATA_DIR / "tools.json", {"tools": make_default_tools()})
+    spools_data = read_json(DATA_DIR / "spools.json", {"spools": {}})
+    status, tools_data, spools_data = normalise_state(status, tools_data, spools_data)
+
+    event_l = event.lower()
+    state_l = state.lower()
+
+    if old_tool != "":
+        update_tool(tools_data, old_tool, "ready", "idle")
+    if new_tool != "":
+        set_tool_active(status, tools_data, new_tool)
+        tool = new_tool
+
+    if tool != "":
+        if event_l in ("pickup", "toolchange", "toolchange_done", "active") or state_l in ("active", "moving", "printing"):
+            set_tool_active(status, tools_data, tool)
+        elif event_l in ("dropoff", "docked", "standby") or state_l in ("ready", "standby", "idle"):
+            update_tool(tools_data, tool, "ready", "idle", spool_id, filament_mm)
+            if str(status.get("active_tool")) == str(tool):
+                status["active_tool"] = None
+        else:
+            update_tool(tools_data, tool, state, mdm_state, spool_id, filament_mm)
+
+    # Optional print/dashboard fields from Klipper.
+    for key in ("progress", "layer", "printing_time", "print_rate_mms", "this_print_m", "print_start_m"):
+        val = get_param(params, key)
+        if val != "":
+            status[key] = to_num(val, val)
+
+    status["last_event"] = event
+    status["last_message"] = message
+    status["updated_at"] = now_iso()
 
     event_row = {
         "time": now_iso(),
         "tool": tool,
+        "old_tool": old_tool,
+        "new_tool": new_tool,
         "event": event,
         "state": state,
         "message": message,
@@ -75,44 +231,15 @@ def record_event(params):
         "mdm_state": mdm_state,
         "filament_mm": filament_mm,
     }
-
     history.setdefault("events", [])
     history["events"].insert(0, event_row)
     history["events"] = history["events"][:200]
 
-    status["last_event"] = event
-    status["last_message"] = message
-    status["updated_at"] = now_iso()
-
-    if tool != "":
-        try:
-            status["active_tool"] = int(tool)
-        except ValueError:
-            status["active_tool"] = tool
-
-        for t in tools_data.get("tools", []):
-            if str(t.get("id")) == str(tool):
-                if state:
-                    t["state"] = state
-                if spool_id:
-                    try:
-                        t["spool_id"] = int(spool_id)
-                    except ValueError:
-                        t["spool_id"] = spool_id
-                if mdm_state:
-                    t["mdm_state"] = mdm_state
-                if filament_mm:
-                    try:
-                        t["filament_mm"] = float(filament_mm)
-                    except ValueError:
-                        t["filament_mm"] = filament_mm
-                t["last_update"] = now_iso()
-
     write_json(DATA_DIR / "status.json", status)
     write_json(DATA_DIR / "history.json", history)
     write_json(DATA_DIR / "tools.json", tools_data)
-
-    return {"ok": True, "event": event_row}
+    write_json(DATA_DIR / "spools.json", spools_data)
+    return {"ok": True, "event": event_row, "status": status}
 
 
 class BTCHandler(SimpleHTTPRequestHandler):
@@ -130,41 +257,31 @@ class BTCHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urlparse(self.path)
-
         if parsed.path == "/api/health":
             self.send_json({"ok": True, "time": now_iso()})
             return
-
         if parsed.path == "/api/status":
             self.send_json(load_dashboard_state())
             return
-
         if parsed.path == "/api/event":
-            params = parse_qs(parsed.query)
-            self.send_json(record_event(params))
+            self.send_json(record_event(parse_qs(parsed.query)))
             return
-
         if parsed.path == "/":
             self.path = "/index.html"
-
         return super().do_GET()
 
     def do_POST(self):
         parsed = urlparse(self.path)
-
         if parsed.path == "/api/event":
             length = int(self.headers.get("Content-Length", "0"))
             body = self.rfile.read(length).decode("utf-8") if length else ""
-
             try:
                 data = json.loads(body) if body else {}
                 params = {k: [str(v)] for k, v in data.items()}
             except Exception:
                 params = parse_qs(body)
-
             self.send_json(record_event(params))
             return
-
         self.send_json({"ok": False, "error": "Unknown POST endpoint"}, 404)
 
 
@@ -173,5 +290,4 @@ if __name__ == "__main__":
     os.chdir(BASE_DIR)
     print(f"BTC Filament Dashboard running on port {PORT}")
     print(f"Serving from: {BASE_DIR}")
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), BTCHandler)
-    server.serve_forever()
+    ThreadingHTTPServer(("0.0.0.0", PORT), BTCHandler).serve_forever()
