@@ -5,14 +5,19 @@ BASE="$HOME/printer_data/config/btc2/features"
 DASH="$BASE/btc_dashboard"
 DATA="$DASH/data"
 PORT=7131
+CACHE_BUST="$(date +%s)"
 
 mkdir -p "$DATA"
 
 fetch() {
-  curl -fsSL "https://raw.githubusercontent.com/qp1306/BTC-Filament-Dashboard/main/$1"
+  curl -fsSL \
+    -H "Cache-Control: no-cache" \
+    -H "Pragma: no-cache" \
+    "https://raw.githubusercontent.com/qp1306/BTC-Filament-Dashboard/main/$1?cache_bust=$CACHE_BUST"
 }
 
 echo "Installing BTC Filament Dashboard..."
+echo "Cache bust: $CACHE_BUST"
 
 # Core files
 fetch btc_dashboard/btc_dashboard_server.py > "$DASH/btc_dashboard_server.py"
@@ -59,3 +64,4 @@ echo "\nInstall complete"
 echo "Open: http://$(hostname -I | awk '{print $1}'):$PORT"
 echo "Klipper include: $BASE/btc_filament_dashboard.cfg"
 echo "Event bridge: $DASH/btc_dash_event.sh"
+echo "Asset check: $(grep -o 'monitor-[0-9]' "$DASH/index.html" | head -1 || true)"
