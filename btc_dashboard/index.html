@@ -3,45 +3,144 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>BTC Filament Dashboard</title>
-  <link rel="stylesheet" href="style.css?v=neon-2" />
+  <title>BTC Filament Monitor</title>
+  <link rel="stylesheet" href="style.css?v=monitor-1" />
 </head>
 <body>
-  <header class="topbar">
-    <div>
-      <h1>BTC Filament Dashboard</h1>
-      <p id="subtitle">Loading dashboard...</p>
-    </div>
-    <a id="mainsailLink" class="back-button" href="http://10.1.1.17:7125">← Back to Mainsail</a>
-  </header>
-
-  <main>
-    <section class="summary-grid">
-      <div class="summary-card">
-        <span class="label">Active Tool</span>
-        <strong id="activeTool">--</strong>
+  <main class="dashboard-shell">
+    <header class="app-header">
+      <div class="brand-mark" aria-hidden="true">
+        <span></span><span></span><span></span>
       </div>
-      <div class="summary-card">
-        <span class="label">Last Event</span>
-        <strong id="lastEvent">--</strong>
-      </div>
-      <div class="summary-card">
-        <span class="label">Updated</span>
-        <strong id="updatedAt">--</strong>
-      </div>
-    </section>
+      <h1>BTC Filament Monitor</h1>
+      <a id="mainsailLink" class="mainsail-link" href="http://10.1.1.17" title="Back to Mainsail">Mainsail ↗</a>
+    </header>
 
-    <section>
-      <h2>Tools T0–T5</h2>
-      <div id="toolGrid" class="tool-grid"></div>
-    </section>
+    <section class="dashboard-grid">
+      <article class="panel active-panel">
+        <div class="panel-title">Active Tool / Spool</div>
+        <div class="panel-rule"></div>
+        <div class="active-content">
+          <div class="active-tool-block">
+            <div id="activeToolBig" class="active-tool-big">--</div>
+            <div class="active-label">ACTIVE TOOL</div>
+            <div class="small-label">Printing Time</div>
+            <div class="metric-inline"><span class="icon">◷</span><strong id="printingTime">--:--:--</strong></div>
+          </div>
+          <div class="vertical-rule"></div>
+          <div class="active-spool-block">
+            <h2 id="activeSpoolName">No Spool</h2>
+            <div class="spool-id-line">Spool ID: <span id="activeSpoolId">--</span> <span class="external-icon">↗</span></div>
+            <div class="active-submetrics">
+              <div>
+                <div class="small-label">Layer</div>
+                <div class="metric-inline"><span class="icon">▰</span><strong id="layerText">-- / --</strong></div>
+              </div>
+              <div>
+                <div class="small-label">Progress</div>
+                <div class="metric-inline"><span id="progressMini" class="mini-ring"></span><strong id="progressText">--%</strong></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </article>
 
-    <section>
-      <h2>Event History</h2>
-      <div id="historyList" class="history-list"></div>
+      <article class="panel mdm-panel">
+        <div class="panel-title"><span class="title-icon">⌁</span> MDM Sensors Status</div>
+        <div class="panel-rule"></div>
+        <div id="mdmTiles" class="mdm-tiles"></div>
+        <div class="mdm-footer">
+          <span>MDM Status:</span>
+          <strong id="mdmStatusBadge" class="ok-badge">OK</strong>
+          <span id="mdmStatusText">All systems normal</span>
+        </div>
+      </article>
+
+      <article class="panel usage-panel">
+        <div class="panel-title">Filament Usage (Live) - Active Tool (<span id="usageActiveTool">--</span>)</div>
+        <div class="panel-rule"></div>
+        <div class="usage-stats">
+          <div class="usage-stat">
+            <div class="stat-icon green">◎</div>
+            <span>This Print</span>
+            <strong id="thisPrintM">0.0 m</strong>
+            <small id="thisPrintG">(0.0 g)</small>
+          </div>
+          <div class="usage-stat">
+            <div class="stat-icon blue">▷</div>
+            <span>Print Start</span>
+            <strong id="printStartM">0.0 m</strong>
+            <small id="printStartG">(0.0 g)</small>
+          </div>
+          <div class="usage-stat">
+            <div class="stat-icon green">⌁</div>
+            <span>Print Rate</span>
+            <strong id="printRate">0.0 mm/s</strong>
+            <small id="printRateG">(0.0 g/min)</small>
+          </div>
+          <div class="usage-stat">
+            <div class="stat-icon purple">Σ</div>
+            <span>Total Used</span>
+            <strong id="totalUsedM">0.0 m</strong>
+            <small id="totalUsedG">(0.0 g)</small>
+          </div>
+        </div>
+        <div class="material-profile">Material Profile: <strong id="materialProfile">--</strong></div>
+      </article>
+
+      <article class="panel remaining-panel">
+        <div class="panel-title">Spool Remaining (Estimated)</div>
+        <div class="panel-rule"></div>
+        <div class="remaining-content">
+          <div class="donut-wrap">
+            <div id="remainingDonut" class="donut" style="--p:0">
+              <div class="donut-core">
+                <strong id="remainingPercent">--%</strong>
+                <span>REMAINING</span>
+              </div>
+            </div>
+          </div>
+          <div class="remaining-list">
+            <div><span>Remaining</span><strong class="green-text" id="remainingMeters">-- m</strong><em id="remainingGrams">(-- g)</em></div>
+            <div><span>Total Spool</span><strong id="totalMeters">-- m</strong><em id="totalGrams">(-- g)</em></div>
+            <div><span>Used (Total)</span><strong id="usedMeters">-- m</strong><em id="usedGrams">(-- g)</em></div>
+            <div><span>Estimated End</span><strong id="estimatedEnd">--</strong><em>(at current rate)</em></div>
+          </div>
+        </div>
+      </article>
+
+      <article class="panel graph-panel">
+        <div class="graph-header">
+          <div class="panel-title"><span class="title-icon">⌁</span> Filament Usage Graph (Active Tool)</div>
+          <select id="toolSelect" class="tool-select"></select>
+        </div>
+        <div class="panel-rule"></div>
+        <div class="graph-wrap">
+          <div class="y-label">Usage (m)</div>
+          <svg id="usageGraph" viewBox="0 0 720 250" preserveAspectRatio="none" aria-label="Filament usage graph"></svg>
+          <div class="graph-axis-x"><span>-6h</span><span>-4h</span><span>-2h</span><span>Now</span></div>
+          <div class="graph-legend"><i></i> Filament Used (m)</div>
+        </div>
+      </article>
+
+      <article class="panel spool-panel">
+        <div class="spool-header">
+          <div class="panel-title"><span class="title-icon">◉</span> Spool Manager (Spoolman)</div>
+          <a class="manage-button" href="http://10.1.1.17:7912" target="_blank" rel="noopener">MANAGE SPOOLS ↗</a>
+        </div>
+        <div class="panel-rule"></div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Tool</th><th>Spool ID</th><th>Material</th><th>Color</th><th>Remaining</th><th>Status</th></tr>
+            </thead>
+            <tbody id="spoolTableBody"></tbody>
+          </table>
+        </div>
+      </article>
     </section>
   </main>
 
-  <script src="app.js?v=neon-2"></script>
+  <script src="app.js?v=monitor-1"></script>
 </body>
 </html>
