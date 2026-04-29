@@ -30,6 +30,13 @@ const estimatedEnd = document.getElementById("estimatedEnd");
 const usageGraph = document.getElementById("usageGraph");
 const toolSelect = document.getElementById("toolSelect");
 const spoolTableBody = document.getElementById("spoolTableBody");
+const assignSpoolOpen = document.getElementById("assignSpoolOpen");
+const assignModal = document.getElementById("assignModal");
+const assignModalClose = document.getElementById("assignModalClose");
+const assignToolSelect = document.getElementById("assignToolSelect");
+const assignSpoolSelect = document.getElementById("assignSpoolSelect");
+const assignSave = document.getElementById("assignSave");
+const assignStatus = document.getElementById("assignStatus");
 
 const DEFAULT_SPOOLS = {
   0:{id:100,material:"PLA",color:"White",hex:"#f5f5f5",total_m:400,remaining_m:312,g_per_m:2.955},
@@ -40,8 +47,12 @@ const DEFAULT_SPOOLS = {
   5:{id:105,material:"PLA",color:"Red",hex:"#ff3030",total_m:400,remaining_m:98,g_per_m:2.959}
 };
 
+let currentData = null;
+let currentSpoolList = [];
+
 function n(v,d=0){const x=Number(v);return Number.isFinite(x)?x:d}
 function clean(v,d="--"){return v==null||v===""?d:v}
+function esc(v){return String(v ?? "").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#039;"}[c]))}
 function m(v){return `${n(v).toFixed(1)} m`}
 function g(v){return `(${n(v).toFixed(1)} g)`}
 function wholeM(v){return `${Math.round(n(v))} m`}
@@ -57,7 +68,7 @@ function getSpool(data,id){
   const t = getTool(data,id);
   const sid = t.spool_id;
   const spools = data.spools || {};
-  const found = spools[sid] || spools[String(sid)] || spools[id] || spools[String(id)];
+  const found = spools[`tool_${id}`] || spools[sid] || spools[String(sid)] || spools[id] || spools[String(id)];
   return {...DEFAULT_SPOOLS[id], ...(found||{}), id: found?.id ?? sid ?? DEFAULT_SPOOLS[id]?.id};
 }
 function isDisabledTool(t,id){
@@ -157,11 +168,11 @@ function renderGraph(data){
 
 function renderTable(data){
   const active = getToolId(data);
-  toolSelect.innerHTML = [0,1,2,3,4,5].map(id=>{const s=getSpool(data,id);return `<option value="${id}" ${id===active?"selected":""}>T${id} (${s.material} - ${s.color})</option>`}).join("");
+  toolSelect.innerHTML = [0,1,2,3,4,5].map(id=>{const s=getSpool(data,id);return `<option value="${id}" ${id===active?"selected":""}>T${id} (${esc(s.material)} - ${esc(s.color)})</option>`}).join("");
   spoolTableBody.innerHTML = [0,1,2,3,4,5].map(id=>{
     const t = getTool(data,id); const s = getSpool(data,id); const gpm = n(s.g_per_m,3); const rem=n(s.remaining_m,0);
     const disabled = isDisabledTool(t,id); const activeRow = id===active && !disabled;
-    return `<tr><td>T${id}</td><td>${clean(s.id,"--")}</td><td>${clean(s.material,"--")}</td><td>${clean(s.color,"--")} <span class="color-dot" style="background:${s.hex||"#777"}"></span></td><td>${wholeM(rem)} ${wholeG(rem*gpm)}</td><td class="${disabled?"status-disabled":activeRow?"status-active":"status-ready"}">${disabled?"DISABLED":activeRow?"ACTIVE":"READY"}</td></tr>`;
+    return `<tr><td>T${id}</td><td>${clean(s.id,"--")}</td><td>${esc(clean(s.material,"--"))}</td><td>${esc(clean(s.color,"--"))} <span class="color-dot" style="background:${s.hex||"#777"}"></span></td><td>${wholeM(rem)} ${wholeG(rem*gpm)}</td><td class="${disabled?"status-disabled":activeRow?"status-active":"status-ready"}">${disabled?"DISABLED":activeRow?"ACTIVE":"READY"}</td><td><button class="assign-row-button" type="button" data-tool="${id}">Assign</button></td></tr>`;
   }).join("");
 }
 
@@ -169,10 +180,87 @@ async function load(){
   try{
     const r = await fetch('/api/status',{cache:'no-store'});
     const d = await r.json();
+    currentData = d;
     renderActive(d); renderMdm(d); renderUsage(d); renderRemaining(d); renderTable(d); renderGraph(d);
   }catch(e){console.error(e)}
 }
 
+async function fetchSpoolList(){
+  const r = await fetch('/api/spools',{cache:'no-store'});
+  const d = await r.json();
+  if(!d.ok) throw new Error(d.error || 'Could not load Spoolman spools');
+  currentSpoolList = d.spools || [];
+  return d;
+}
+
+function renderAssignSpoolOptions(selectedSpoolId){
+  assignSpoolSelect.innerHTML = currentSpoolList.map(spool => {
+    const selected = String(spool.id) === String(selectedSpoolId) ? 'selected' : '';
+    const rem = spool.remaining_m != null ? ` - ${Math.round(Number(spool.remaining_m))} m` : '';
+    return `<option value="${spool.id}" ${selected}>${esc(spool.label)}${esc(rem)}</option>`;
+  }).join('');
+}
+
+async function openAssignModal(toolId){
+  const tool = Number(toolId ?? getToolId(currentData || {}));
+  const t = currentData ? getTool(currentData, tool) : {spool_id:''};
+  assignToolSelect.value = String(tool);
+  assignStatus.textContent = 'Loading Spoolman spools...';
+  assignModal.hidden = false;
+  try{
+    await fetchSpoolList();
+    renderAssignSpoolOptions(t.spool_id);
+    assignStatus.textContent = `Assign a Spoolman spool to T${tool}.`;
+  }catch(e){
+    assignStatus.textContent = e.message;
+  }
+}
+
+function closeAssignModal(){
+  assignModal.hidden = true;
+}
+
+async function saveAssignment(){
+  const tool = Number(assignToolSelect.value);
+  const spoolId = Number(assignSpoolSelect.value);
+  if(!Number.isFinite(tool) || !Number.isFinite(spoolId)){
+    assignStatus.textContent = 'Select both a tool and a spool.';
+    return;
+  }
+  assignSave.disabled = true;
+  assignStatus.textContent = `Saving T${tool} -> Spool ${spoolId}...`;
+  try{
+    const r = await fetch('/api/assign_spool',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({tool, spool_id:spoolId})
+    });
+    const d = await r.json();
+    if(!d.ok) throw new Error(d.error || 'Assignment failed');
+    assignStatus.textContent = `Saved: T${tool} -> Spool ${spoolId}`;
+    await load();
+    setTimeout(closeAssignModal, 350);
+  }catch(e){
+    assignStatus.textContent = e.message;
+  }finally{
+    assignSave.disabled = false;
+  }
+}
+
 toolSelect?.addEventListener("change",()=>load());
+assignSpoolOpen?.addEventListener('click',()=>openAssignModal());
+assignModalClose?.addEventListener('click',closeAssignModal);
+assignSave?.addEventListener('click',saveAssignment);
+assignToolSelect?.addEventListener('change',()=>{
+  const t = currentData ? getTool(currentData, Number(assignToolSelect.value)) : {spool_id:''};
+  renderAssignSpoolOptions(t.spool_id);
+  assignStatus.textContent = `Assign a Spoolman spool to T${assignToolSelect.value}.`;
+});
+assignModal?.addEventListener('click',e=>{ if(e.target === assignModal) closeAssignModal(); });
+spoolTableBody?.addEventListener('click',e=>{
+  const btn = e.target.closest('.assign-row-button');
+  if(btn) openAssignModal(btn.dataset.tool);
+});
+
 setInterval(load,2000);
 load();
