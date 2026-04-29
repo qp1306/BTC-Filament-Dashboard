@@ -4,7 +4,22 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>BTC Filament Monitor</title>
-  <link rel="stylesheet" href="style.css?v=monitor-6" />
+  <link rel="stylesheet" href="style.css?v=monitor-7" />
+  <style>
+    /* monitor-7: keep all 6 Spoolman rows visible after adding Assign buttons */
+    @media(min-width:1101px){
+      .dashboard-grid{grid-template-rows:minmax(0,1.02fr) minmax(0,1.06fr) minmax(0,1.17fr)!important;}
+      .spool-panel{padding-bottom:8px!important;}
+      .spool-panel .panel-rule{margin:6px 0 4px!important;}
+      .spool-panel .table-wrap{overflow:hidden!important;}
+      .spool-panel table{font-size:12.6px!important;line-height:1!important;}
+      .spool-panel th,.spool-panel td{padding:2.6px 7px!important;}
+      .spool-panel .panel-title{font-size:18px!important;}
+      .spool-panel .manage-button{font-size:12px!important;padding:5px 8px!important;border-radius:7px!important;}
+      .spool-panel .assign-row-button{font-size:11px!important;padding:3px 6px!important;border-radius:6px!important;}
+      .spool-panel .color-dot{width:11px!important;height:11px!important;margin-left:6px!important;}
+    }
+  </style>
 </head>
 <body>
   <main class="dashboard-shell">
@@ -172,6 +187,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=monitor-6"></script>
+  <script src="app.js?v=monitor-7"></script>
 </body>
 </html>
