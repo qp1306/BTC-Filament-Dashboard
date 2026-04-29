@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 import json
+import math
 import os
 import time
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
+from urllib.request import urlopen
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 PORT = int(os.environ.get("BTC_DASHBOARD_PORT", "7131"))
+SPOOLMAN_URL = os.environ.get("SPOOLMAN_URL", "http://127.0.0.1:7912").rstrip("/")
 
 DEFAULT_SPOOLS = {
     "0": {"id": 100, "material": "PLA", "color": "White", "hex": "#f5f5f5", "total_m": 400, "remaining_m": 312, "g_per_m": 2.955},
@@ -70,6 +73,156 @@ def make_default_tools():
     return tools
 
 
+def fetch_json(url, timeout=0.9):
+    try:
+        with urlopen(url, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except Exception:
+        return None
+
+
+def grams_to_meters(weight_g, density_g_cm3, diameter_mm):
+    weight_g = to_num(weight_g, None)
+    density_g_cm3 = to_num(density_g_cm3, None)
+    diameter_mm = to_num(diameter_mm, None)
+    if not weight_g or not density_g_cm3 or not diameter_mm:
+        return None
+    radius_cm = (diameter_mm / 10.0) / 2.0
+    area_cm2 = math.pi * radius_cm * radius_cm
+    if area_cm2 <= 0:
+        return None
+    volume_cm3 = weight_g / density_g_cm3
+    length_cm = volume_cm3 / area_cm2
+    return length_cm / 100.0
+
+
+def normalise_length_to_m(value):
+    value = to_num(value, None)
+    if value is None:
+        return None
+    # Spoolman commonly reports length-like values in millimetres. If a value
+    # looks huge, convert mm -> m. If it already looks like metres, keep it.
+    if value > 5000:
+        return value / 1000.0
+    return value
+
+
+def hex_colour(value, fallback="#777777"):
+    if not value:
+        return fallback
+    value = str(value).strip()
+    if not value:
+        return fallback
+    if not value.startswith("#"):
+        value = "#" + value
+    return value
+
+
+def colour_name_from_filament(filament):
+    name = str(filament.get("name") or "").strip()
+    material = str(filament.get("material") or "").strip()
+    if name and material and name.lower().startswith(material.lower()):
+        colour = name[len(material):].strip(" -_/:")
+        return colour or name
+    return name or "Spool"
+
+
+def spoolman_to_dashboard_spool(spool):
+    filament = spool.get("filament") or {}
+    material = filament.get("material") or "Unknown"
+    colour = colour_name_from_filament(filament)
+    colour_hex = hex_colour(filament.get("color_hex"))
+
+    density = to_num(filament.get("density"), None)
+    diameter = to_num(filament.get("diameter"), None)
+    filament_weight = to_num(filament.get("weight"), None)
+
+    total_m = normalise_length_to_m(
+        spool.get("filament_length")
+        or spool.get("initial_length")
+        or spool.get("total_length")
+        or spool.get("length")
+    )
+    if total_m is None:
+        total_m = grams_to_meters(filament_weight, density, diameter) or 0
+
+    remaining_m = normalise_length_to_m(spool.get("remaining_length"))
+    remaining_weight = to_num(spool.get("remaining_weight"), None)
+    if remaining_m is None and remaining_weight is not None:
+        remaining_m = grams_to_meters(remaining_weight, density, diameter)
+    if remaining_m is None:
+        used_weight = to_num(spool.get("used_weight"), 0)
+        if filament_weight is not None:
+            remaining_weight = max(0, filament_weight - used_weight)
+            remaining_m = grams_to_meters(remaining_weight, density, diameter)
+    if remaining_m is None:
+        remaining_m = total_m
+
+    g_per_m = None
+    if total_m and filament_weight:
+        g_per_m = filament_weight / total_m
+    if not g_per_m:
+        g_per_m = 3.0
+
+    return {
+        "id": spool.get("id"),
+        "material": material,
+        "color": colour,
+        "hex": colour_hex,
+        "total_m": round(float(total_m or 0), 1),
+        "remaining_m": round(float(remaining_m or 0), 1),
+        "g_per_m": round(float(g_per_m), 3),
+        "source": "spoolman",
+        "filament_name": filament.get("name", ""),
+        "vendor": (filament.get("vendor") or {}).get("name", ""),
+    }
+
+
+def load_tool_spool_map():
+    raw = read_json(DATA_DIR / "tool_spools.json", {})
+    if isinstance(raw, dict) and "tools" in raw and isinstance(raw["tools"], dict):
+        raw = raw["tools"]
+    if not isinstance(raw, dict):
+        return {}
+    result = {}
+    for tool, spool_id in raw.items():
+        if spool_id in (None, "", "null"):
+            continue
+        result[str(tool)] = str(spool_id)
+    return result
+
+
+def apply_spoolman_mapping(tools_data, spools_data):
+    mapping = load_tool_spool_map()
+    if not mapping:
+        return tools_data, spools_data
+
+    spools = spools_data.setdefault("spools", {})
+    cache = {}
+    for tool_id, spool_id in mapping.items():
+        spool = cache.get(spool_id)
+        if spool is None:
+            spool = fetch_json(f"{SPOOLMAN_URL}/api/v1/spool/{spool_id}")
+            cache[spool_id] = spool
+        if not spool:
+            continue
+
+        dash_spool = spoolman_to_dashboard_spool(spool)
+        spools[str(spool_id)] = dash_spool
+        spools[str(tool_id)] = dash_spool
+
+        for t in tools_data.get("tools", []):
+            if str(t.get("id")) == str(tool_id):
+                t["spool_id"] = to_num(spool_id, spool_id)
+                total_m = dash_spool.get("total_m", 0)
+                remaining_m = dash_spool.get("remaining_m", total_m)
+                t["filament_mm"] = round(max(0, total_m - remaining_m) * 1000, 1)
+                t["last_spoolman_sync"] = now_iso()
+                break
+
+    return tools_data, spools_data
+
+
 def normalise_state(status, tools_data, spools_data):
     tools = tools_data.setdefault("tools", [])
     by_id = {str(t.get("id")): t for t in tools if "id" in t}
@@ -125,6 +278,7 @@ def load_dashboard_state():
     history = read_json(DATA_DIR / "history.json", {"events": []})
     status = read_json(DATA_DIR / "status.json", {})
     status, tools, spools = normalise_state(status, tools, spools)
+    tools, spools = apply_spoolman_mapping(tools, spools)
 
     return {
         "ok": True,
@@ -204,6 +358,7 @@ def record_event(params):
     tools_data = read_json(DATA_DIR / "tools.json", {"tools": make_default_tools()})
     spools_data = read_json(DATA_DIR / "spools.json", {"spools": {}})
     status, tools_data, spools_data = normalise_state(status, tools_data, spools_data)
+    tools_data, spools_data = apply_spoolman_mapping(tools_data, spools_data)
 
     event_l = event.lower()
     state_l = state.lower()
