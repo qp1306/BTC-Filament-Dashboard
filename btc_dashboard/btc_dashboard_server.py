@@ -100,8 +100,6 @@ def normalise_length_to_m(value):
     value = to_num(value, None)
     if value is None:
         return None
-    # Spoolman commonly reports length-like values in millimetres. If a value
-    # looks huge, convert mm -> m. If it already looks like metres, keep it.
     if value > 5000:
         return value / 1000.0
     return value
@@ -209,7 +207,7 @@ def apply_spoolman_mapping(tools_data, spools_data):
 
         dash_spool = spoolman_to_dashboard_spool(spool)
         spools[str(spool_id)] = dash_spool
-        spools[str(tool_id)] = dash_spool
+        spools[f"tool_{tool_id}"] = dash_spool
 
         for t in tools_data.get("tools", []):
             if str(t.get("id")) == str(tool_id):
@@ -407,7 +405,6 @@ def record_event(params):
         else:
             update_tool(tools_data, tool, state, mdm_state, spool_id, filament_mm)
 
-    # Optional print/dashboard fields from Klipper.
     for key in ("progress", "layer", "printing_time", "print_rate_mms", "this_print_m", "print_start_m"):
         val = get_param(params, key)
         if val != "":
