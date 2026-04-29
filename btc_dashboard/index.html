@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>BTC Filament Monitor</title>
-  <link rel="stylesheet" href="style.css?v=monitor-5" />
+  <link rel="stylesheet" href="style.css?v=monitor-6" />
 </head>
 <body>
   <main class="dashboard-shell">
@@ -126,13 +126,16 @@
       <article class="panel spool-panel">
         <div class="spool-header">
           <div class="panel-title"><span class="title-icon">◉</span> Spool Manager (Spoolman)</div>
-          <a class="manage-button" href="http://10.1.1.17:7912" target="_blank" rel="noopener">MANAGE SPOOLS ↗</a>
+          <div class="spool-actions">
+            <button id="assignSpoolOpen" class="manage-button" type="button">ASSIGN SPOOL</button>
+            <a class="manage-button" href="http://10.1.1.17:7912" target="_blank" rel="noopener">MANAGE SPOOLS ↗</a>
+          </div>
         </div>
         <div class="panel-rule"></div>
         <div class="table-wrap">
           <table>
             <thead>
-              <tr><th>Tool</th><th>Spool ID</th><th>Material</th><th>Color</th><th>Remaining</th><th>Status</th></tr>
+              <tr><th>Tool</th><th>Spool ID</th><th>Material</th><th>Color</th><th>Remaining</th><th>Status</th><th>Assign</th></tr>
             </thead>
             <tbody id="spoolTableBody"></tbody>
           </table>
@@ -141,6 +144,34 @@
     </section>
   </main>
 
-  <script src="app.js?v=monitor-5"></script>
+  <div id="assignModal" class="modal-backdrop" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="assignModalTitle">
+      <div class="modal-header">
+        <h2 id="assignModalTitle">Assign Spool to Tool</h2>
+        <button id="assignModalClose" class="modal-close" type="button" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body">
+        <label class="modal-label" for="assignToolSelect">Tool</label>
+        <select id="assignToolSelect" class="modal-select">
+          <option value="0">T0</option>
+          <option value="1">T1</option>
+          <option value="2">T2</option>
+          <option value="3">T3</option>
+          <option value="4">T4</option>
+          <option value="5">T5</option>
+        </select>
+
+        <label class="modal-label" for="assignSpoolSelect">Spoolman Spool</label>
+        <select id="assignSpoolSelect" class="modal-select"></select>
+
+        <div id="assignStatus" class="assign-status">Select a tool and a spool, then save.</div>
+      </div>
+      <div class="modal-footer">
+        <button id="assignSave" class="modal-save" type="button">SAVE ASSIGNMENT</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js?v=monitor-6"></script>
 </body>
 </html>
