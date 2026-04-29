@@ -190,6 +190,40 @@ def load_tool_spool_map():
     return result
 
 
+def save_tool_spool_map(mapping):
+    clean = {}
+    for tool, spool_id in mapping.items():
+        if str(tool) not in {"0", "1", "2", "3", "4", "5"}:
+            continue
+        if spool_id in (None, "", "null"):
+            continue
+        clean[str(tool)] = int(spool_id)
+    write_json(DATA_DIR / "tool_spools.json", clean)
+    return clean
+
+
+def list_spoolman_spools():
+    data = fetch_json(f"{SPOOLMAN_URL}/api/v1/spool")
+    if not isinstance(data, list):
+        return []
+    out = []
+    for spool in data:
+        dash = spoolman_to_dashboard_spool(spool)
+        filament = spool.get("filament") or {}
+        out.append({
+            "id": spool.get("id"),
+            "label": f"#{spool.get('id')} - {filament.get('name') or dash['material'] + ' ' + dash['color']}",
+            "material": dash["material"],
+            "color": dash["color"],
+            "hex": dash["hex"],
+            "remaining_m": dash["remaining_m"],
+            "remaining_g": round(dash["remaining_m"] * dash["g_per_m"], 1),
+            "filament_name": dash.get("filament_name", ""),
+            "vendor": dash.get("vendor", ""),
+        })
+    return out
+
+
 def apply_spoolman_mapping(tools_data, spools_data):
     mapping = load_tool_spool_map()
     if not mapping:
@@ -284,6 +318,7 @@ def load_dashboard_state():
         "config": config,
         "tools": tools.get("tools", []),
         "spools": spools.get("spools", {}),
+        "spool_map": load_tool_spool_map(),
         "history": history.get("events", []),
         "status": status,
     }
@@ -437,6 +472,30 @@ def record_event(params):
     return {"ok": True, "event": event_row, "status": status}
 
 
+def assign_spool(params):
+    tool = get_param(params, "tool")
+    spool_id = get_param(params, "spool_id")
+    if str(tool) not in {"0", "1", "2", "3", "4", "5"}:
+        return {"ok": False, "error": "Tool must be 0-5"}
+    if spool_id == "":
+        return {"ok": False, "error": "Missing spool_id"}
+    spool = fetch_json(f"{SPOOLMAN_URL}/api/v1/spool/{spool_id}")
+    if not spool:
+        return {"ok": False, "error": f"Spoolman spool {spool_id} not found"}
+
+    mapping = load_tool_spool_map()
+    mapping[str(tool)] = str(spool_id)
+    saved = save_tool_spool_map(mapping)
+
+    tools_data = read_json(DATA_DIR / "tools.json", {"tools": make_default_tools()})
+    spools_data = read_json(DATA_DIR / "spools.json", {"spools": {}})
+    tools_data, spools_data = apply_spoolman_mapping(tools_data, spools_data)
+    write_json(DATA_DIR / "tools.json", tools_data)
+    write_json(DATA_DIR / "spools.json", spools_data)
+
+    return {"ok": True, "tool": int(tool), "spool_id": int(spool_id), "spool_map": saved}
+
+
 class BTCHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(BASE_DIR), **kwargs)
@@ -458,6 +517,13 @@ class BTCHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/status":
             self.send_json(load_dashboard_state())
             return
+        if parsed.path == "/api/spools":
+            self.send_json({"ok": True, "spools": list_spoolman_spools(), "spool_map": load_tool_spool_map()})
+            return
+        if parsed.path == "/api/assign_spool":
+            result = assign_spool(parse_qs(parsed.query))
+            self.send_json(result, 200 if result.get("ok") else 400)
+            return
         if parsed.path == "/api/event":
             self.send_json(record_event(parse_qs(parsed.query)))
             return
@@ -467,7 +533,7 @@ class BTCHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
-        if parsed.path == "/api/event":
+        if parsed.path in ("/api/event", "/api/assign_spool"):
             length = int(self.headers.get("Content-Length", "0"))
             body = self.rfile.read(length).decode("utf-8") if length else ""
             try:
@@ -475,6 +541,10 @@ class BTCHandler(SimpleHTTPRequestHandler):
                 params = {k: [str(v)] for k, v in data.items()}
             except Exception:
                 params = parse_qs(body)
+            if parsed.path == "/api/assign_spool":
+                result = assign_spool(params)
+                self.send_json(result, 200 if result.get("ok") else 400)
+                return
             self.send_json(record_event(params))
             return
         self.send_json({"ok": False, "error": "Unknown POST endpoint"}, 404)
