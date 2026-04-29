@@ -113,6 +113,7 @@ def normalise_state(status, tools_data, spools_data):
     status.setdefault("printing_time", "02:14:37")
     status.setdefault("print_rate_mms", 6.2)
     status.setdefault("this_print_m", 14.8)
+    status.setdefault("print_state", "idle")
 
     return status, tools_data, spools_data
 
@@ -148,7 +149,7 @@ def set_tool_active(status, tools_data, tool):
     for t in tools_data.get("tools", []):
         if str(t.get("id")) == str(tool):
             t["state"] = "active"
-            t["mdm_state"] = "moving"
+            t["mdm_state"] = "moving" if status.get("printing", False) else "idle"
             t["last_update"] = now_iso()
         elif str(t.get("state", "")).lower() in ("active", "moving", "printing"):
             t["state"] = "ready"
@@ -173,6 +174,20 @@ def update_tool(tools_data, tool, state="", mdm_state="", spool_id="", filament_
             return
 
 
+def mark_all_tools_idle_except_active(status, tools_data):
+    active = status.get("active_tool")
+    for t in tools_data.get("tools", []):
+        if str(t.get("id")) == str(active):
+            t["state"] = "active"
+            t["mdm_state"] = "idle"
+        else:
+            if str(t.get("state", "")).lower() in ("active", "moving", "printing"):
+                t["state"] = "ready"
+            if str(t.get("mdm_state", "")).lower() in ("active", "moving", "printing"):
+                t["mdm_state"] = "idle"
+        t["last_update"] = now_iso()
+
+
 def record_event(params):
     tool = get_param(params, "tool")
     old_tool = get_param(params, "old_tool")
@@ -193,13 +208,41 @@ def record_event(params):
     event_l = event.lower()
     state_l = state.lower()
 
+    if event_l in ("print_start", "print_started", "start"):
+        status["printing"] = True
+        status["print_state"] = "printing"
+        status["progress"] = 0
+        status["layer"] = "0 / 0"
+        status["printing_time"] = "00:00:00"
+        status["print_rate_mms"] = 0
+        status["this_print_m"] = 0
+        status["print_start_time"] = now_iso()
+        if tool != "":
+            status["active_tool"] = to_num(tool, tool)
+        mark_all_tools_idle_except_active(status, tools_data)
+
+    elif event_l in ("print_end", "print_complete", "complete", "completed"):
+        status["printing"] = False
+        status["print_state"] = "complete"
+        status["progress"] = 100
+        status["print_rate_mms"] = 0
+        status["print_end_time"] = now_iso()
+        mark_all_tools_idle_except_active(status, tools_data)
+
+    elif event_l in ("print_cancel", "print_cancelled", "cancel", "cancelled"):
+        status["printing"] = False
+        status["print_state"] = "cancelled"
+        status["print_rate_mms"] = 0
+        status["print_end_time"] = now_iso()
+        mark_all_tools_idle_except_active(status, tools_data)
+
     if old_tool != "":
         update_tool(tools_data, old_tool, "ready", "idle")
     if new_tool != "":
         set_tool_active(status, tools_data, new_tool)
         tool = new_tool
 
-    if tool != "":
+    if tool != "" and event_l not in ("print_start", "print_started", "start", "print_end", "print_complete", "complete", "completed", "print_cancel", "print_cancelled", "cancel", "cancelled"):
         if event_l in ("pickup", "toolchange", "toolchange_done", "active") or state_l in ("active", "moving", "printing"):
             set_tool_active(status, tools_data, tool)
         elif event_l in ("dropoff", "docked", "standby") or state_l in ("ready", "standby", "idle"):
