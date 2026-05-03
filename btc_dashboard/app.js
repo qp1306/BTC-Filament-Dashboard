@@ -57,6 +57,12 @@ function m(v){return `${n(v).toFixed(1)} m`}
 function g(v){return `(${n(v).toFixed(1)} g)`}
 function wholeM(v){return `${Math.round(n(v))} m`}
 function wholeG(v){return `(${Math.round(n(v))} g)`}
+function densityFromGpm(gpm, diameterMm=1.75){
+  const d = n(diameterMm, 1.75);
+  const radiusCm = (d / 10) / 2;
+  const volumePerMeterCm3 = Math.PI * radiusCm * radiusCm * 100;
+  return volumePerMeterCm3 > 0 ? n(gpm, 0) / volumePerMeterCm3 : 0;
+}
 
 function getToolId(data){
   const at = data?.status?.active_tool;
@@ -132,7 +138,13 @@ function renderUsage(data){
   printStartM.textContent = m(startUsed); printStartG.textContent = g(startUsed*gpm);
   printRate.textContent = `${rate.toFixed(1)} mm/s`; printRateG.textContent = `(${(rate*60/1000*gpm).toFixed(1)} g/min)`;
   totalUsedM.textContent = m(totalUsed); totalUsedG.textContent = g(totalUsed*gpm);
-  materialProfile.textContent = `${clean(s.material,"--")} (${gpm.toFixed(2)} g/m)`;
+
+  const material = clean(s.material, "--");
+  const filamentName = clean(s.filament_name || s.color || s.material, "--");
+  const profileName = filamentName !== material ? `${esc(filamentName)} / ${esc(material)}` : esc(material);
+  const diameter = n(s.diameter, 1.75);
+  const density = n(s.density, densityFromGpm(gpm, diameter));
+  materialProfile.innerHTML = `${profileName}<br>Density: ${density.toFixed(2)} g/cm³<br>Weight: ${gpm.toFixed(2)} g/m`;
 }
 
 function renderRemaining(data){
