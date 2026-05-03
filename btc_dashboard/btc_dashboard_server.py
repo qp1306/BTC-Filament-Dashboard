@@ -323,9 +323,11 @@ def merge_moonraker_live_status(status):
     if duration is None or duration <= 0:
         duration = to_num(ps.get("total_duration"), 0)
 
-    progress = progress_to_percent(ds.get("progress"))
+    # Match Mainsail's main print progress: use virtual_sdcard file progress first.
+    # display_status.progress can be changed by M73 and may be slicer/layer based.
+    progress = progress_to_percent(vsd.get("progress"))
     if progress is None:
-        progress = progress_to_percent(vsd.get("progress"))
+        progress = progress_to_percent(ds.get("progress"))
     if progress is None:
         progress = to_num(status.get("progress"), 0)
     if print_state == "complete":
