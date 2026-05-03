@@ -107,14 +107,15 @@ function renderActive(data){
   const s = getSpool(data,id);
   const material = clean(s.material || t.material, "Unknown");
   const color = clean(s.color || t.color, "Spool");
-  const progress = n(data.status?.progress, 16);
+  const progress = n(data.status?.progress, 0);
+  const visibleProgress = Math.floor(Math.max(0, Math.min(100, progress)));
   activeToolBig.textContent = `T${id}`;
   activeSpoolName.textContent = `${material} - ${color}`;
   activeSpoolId.textContent = clean(s.id ?? t.spool_id, "--");
-  printingTime.textContent = clean(data.status?.printing_time, "02:14:37");
-  layerText.textContent = clean(data.status?.layer, "42 / 256");
-  progressText.textContent = `${Math.round(progress)}%`;
-  progressMini.style.setProperty("--p", `${progress}%`);
+  printingTime.textContent = clean(data.status?.printing_time, "00:00:00");
+  layerText.textContent = clean(data.status?.layer, "-- / --");
+  progressText.textContent = `${visibleProgress}%`;
+  progressMini.style.setProperty("--p", `${visibleProgress}%`);
   usageActiveTool.textContent = `T${id}`;
 }
 
