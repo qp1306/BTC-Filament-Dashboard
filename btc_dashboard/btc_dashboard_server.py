@@ -12,6 +12,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 PORT = int(os.environ.get("BTC_DASHBOARD_PORT", "7131"))
 SPOOLMAN_URL = os.environ.get("SPOOLMAN_URL", "http://127.0.0.1:7912").rstrip("/")
+MOONRAKER_URL = os.environ.get("MOONRAKER_URL", "http://127.0.0.1:7125").rstrip("/")
 
 DEFAULT_SPOOLS = {
     "0": {"id": 100, "material": "PLA", "color": "White", "hex": "#f5f5f5", "total_m": 400, "remaining_m": 312, "g_per_m": 2.955},
@@ -57,6 +58,28 @@ def to_num(value, fallback=None):
         return fallback
 
 
+def clamp(value, low, high):
+    value = to_num(value, low)
+    return max(low, min(high, value))
+
+
+def seconds_to_hms(seconds):
+    seconds = int(max(0, to_num(seconds, 0) or 0))
+    h = seconds // 3600
+    m = (seconds % 3600) // 60
+    s = seconds % 60
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+def seconds_to_eta(seconds):
+    seconds = int(max(0, to_num(seconds, 0) or 0))
+    h = seconds // 3600
+    m = (seconds % 3600) // 60
+    if h > 0:
+        return f"~ {h}h {m:02d}m"
+    return f"~ {m}m"
+
+
 def make_default_tools():
     tools = []
     for i in range(6):
@@ -100,6 +123,7 @@ def normalise_length_to_m(value):
     value = to_num(value, None)
     if value is None:
         return None
+    # Spoolman commonly returns millimetres for length fields. Values above 5000 are treated as mm.
     if value > 5000:
         return value / 1000.0
     return value
@@ -255,14 +279,133 @@ def apply_spoolman_mapping(tools_data, spools_data):
     return tools_data, spools_data
 
 
+def fetch_moonraker_status():
+    data = fetch_json(f"{MOONRAKER_URL}/printer/objects/query?print_stats&display_status&virtual_sdcard", timeout=0.75)
+    if not isinstance(data, dict):
+        return None
+    result = data.get("result") or {}
+    status = result.get("status") or {}
+    if not isinstance(status, dict):
+        return None
+    return status
+
+
+def progress_to_percent(value):
+    value = to_num(value, None)
+    if value is None:
+        return None
+    if value <= 1.0:
+        value *= 100.0
+    return round(clamp(value, 0, 100), 1)
+
+
+def merge_moonraker_live_status(status):
+    live = fetch_moonraker_status()
+    if live is None:
+        status["moonraker_live"] = False
+        status["moonraker_error"] = "Moonraker not reachable"
+        return status
+
+    ps = live.get("print_stats") or {}
+    ds = live.get("display_status") or {}
+    vsd = live.get("virtual_sdcard") or {}
+    if not isinstance(ps, dict):
+        ps = {}
+    if not isinstance(ds, dict):
+        ds = {}
+    if not isinstance(vsd, dict):
+        vsd = {}
+
+    print_state = str(ps.get("state") or status.get("print_state") or "standby").lower()
+    printing = print_state in {"printing", "paused"}
+
+    duration = to_num(ps.get("print_duration"), None)
+    if duration is None or duration <= 0:
+        duration = to_num(ps.get("total_duration"), 0)
+
+    progress = progress_to_percent(ds.get("progress"))
+    if progress is None:
+        progress = progress_to_percent(vsd.get("progress"))
+    if progress is None:
+        progress = to_num(status.get("progress"), 0)
+    if print_state == "complete":
+        progress = 100
+
+    info = ps.get("info") or {}
+    if not isinstance(info, dict):
+        info = {}
+    current_layer = to_num(info.get("current_layer"), None)
+    total_layer = to_num(info.get("total_layer"), None)
+    if current_layer is not None and total_layer is not None:
+        layer = f"{int(current_layer)} / {int(total_layer)}"
+    elif current_layer is not None:
+        layer = f"{int(current_layer)} / --"
+    elif total_layer is not None:
+        layer = f"-- / {int(total_layer)}"
+    else:
+        layer = status.get("layer") or "-- / --"
+
+    filament_used_mm = to_num(ps.get("filament_used"), None)
+    if filament_used_mm is not None:
+        status["this_print_m"] = round(max(0, filament_used_mm) / 1000.0, 3)
+
+    status["moonraker_live"] = True
+    status.pop("moonraker_error", None)
+    status["print_state"] = print_state
+    status["printing"] = printing
+    status["filename"] = ps.get("filename") or ""
+    status["printing_time"] = seconds_to_hms(duration)
+    status["progress"] = progress
+    status["layer"] = layer
+    status["current_layer"] = current_layer
+    status["total_layer"] = total_layer
+    status["print_duration"] = to_num(ps.get("print_duration"), 0)
+    status["total_duration"] = to_num(ps.get("total_duration"), 0)
+    status["virtual_sdcard_active"] = bool(vsd.get("is_active"))
+    status["display_message"] = ds.get("message") or ps.get("message") or ""
+    status["updated_at"] = now_iso()
+
+    if printing and progress and progress > 0 and duration:
+        remaining_seconds = duration * ((100.0 - progress) / progress)
+        status["estimated_end"] = seconds_to_eta(remaining_seconds)
+    elif print_state == "complete":
+        status["estimated_end"] = "complete"
+    elif print_state == "cancelled":
+        status["estimated_end"] = "cancelled"
+    elif print_state == "error":
+        status["estimated_end"] = "error"
+    else:
+        status.setdefault("estimated_end", "--")
+
+    return status
+
+
+def scrub_demo_status(status):
+    # Old monitor builds used these demo placeholders. Clear them so stale values do not hang around.
+    if (
+        str(status.get("printing_time")) == "02:14:37"
+        and str(status.get("layer")) == "42 / 256"
+        and to_num(status.get("progress"), None) == 16
+    ):
+        status["printing_time"] = "00:00:00"
+        status["layer"] = "-- / --"
+        status["progress"] = 0
+        status["print_rate_mms"] = 0
+        status["this_print_m"] = 0
+        status["estimated_end"] = "--"
+    return status
+
+
 def normalise_state(status, tools_data, spools_data):
+    status = scrub_demo_status(status)
     tools = tools_data.setdefault("tools", [])
     by_id = {str(t.get("id")): t for t in tools if "id" in t}
 
+    defaults = make_default_tools()
     for i in range(6):
         sid = str(i)
         if sid not in by_id:
-            tools.append(make_default_tools()[i])
+            tools.append(defaults[i])
             by_id[sid] = tools[-1]
         t = by_id[sid]
         t.setdefault("id", i)
@@ -293,12 +436,14 @@ def normalise_state(status, tools_data, spools_data):
         spools.setdefault(str(i), DEFAULT_SPOOLS[str(i)].copy())
         spools.setdefault(str(DEFAULT_SPOOLS[str(i)]["id"]), DEFAULT_SPOOLS[str(i)].copy())
 
-    status.setdefault("progress", 16)
-    status.setdefault("layer", "42 / 256")
-    status.setdefault("printing_time", "02:14:37")
-    status.setdefault("print_rate_mms", 6.2)
-    status.setdefault("this_print_m", 14.8)
-    status.setdefault("print_state", "idle")
+    status.setdefault("progress", 0)
+    status.setdefault("layer", "-- / --")
+    status.setdefault("printing_time", "00:00:00")
+    status.setdefault("print_rate_mms", 0)
+    status.setdefault("this_print_m", 0)
+    status.setdefault("print_start_m", 0)
+    status.setdefault("print_state", "standby")
+    status.setdefault("estimated_end", "--")
 
     return status, tools_data, spools_data
 
@@ -309,6 +454,8 @@ def load_dashboard_state():
     spools = read_json(DATA_DIR / "spools.json", {"spools": {}})
     history = read_json(DATA_DIR / "history.json", {"events": []})
     status = read_json(DATA_DIR / "status.json", {})
+
+    status = merge_moonraker_live_status(status)
     status, tools, spools = normalise_state(status, tools, spools)
     tools, spools = apply_spoolman_mapping(tools, spools)
 
@@ -404,6 +551,7 @@ def record_event(params):
         status["printing_time"] = "00:00:00"
         status["print_rate_mms"] = 0
         status["this_print_m"] = 0
+        status["print_start_m"] = 0
         status["print_start_time"] = now_iso()
         if tool != "":
             status["active_tool"] = to_num(tool, tool)
@@ -512,7 +660,7 @@ class BTCHandler(SimpleHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         if parsed.path == "/api/health":
-            self.send_json({"ok": True, "time": now_iso()})
+            self.send_json({"ok": True, "time": now_iso(), "moonraker_url": MOONRAKER_URL, "spoolman_url": SPOOLMAN_URL})
             return
         if parsed.path == "/api/status":
             self.send_json(load_dashboard_state())
@@ -555,4 +703,6 @@ if __name__ == "__main__":
     os.chdir(BASE_DIR)
     print(f"BTC Filament Dashboard running on port {PORT}")
     print(f"Serving from: {BASE_DIR}")
+    print(f"Moonraker URL: {MOONRAKER_URL}")
+    print(f"Spoolman URL: {SPOOLMAN_URL}")
     ThreadingHTTPServer(("0.0.0.0", PORT), BTCHandler).serve_forever()
